@@ -83,7 +83,7 @@ def parse_jobs(raw_jobs: list[dict]) -> list[dict]:
             "company":     j.get("employer_name", "Unknown"),
             "location":    (j.get("job_city") or "") + ", " + (j.get("job_country") or ""),
             "url":         j.get("job_apply_link") or j.get("job_google_link", ""),
-            "description": j.get("job_description", "")[:3000],  # cap to save tokens
+            "description": (j.get("job_description") or "")[:3000],  # cap to save tokens
             "posted":      j.get("job_posted_at_datetime_utc", ""),
         })
     return jobs
