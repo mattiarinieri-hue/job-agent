@@ -273,12 +273,9 @@ def run():
     # Run multiple searches to maximise results for European/Italian job market
     # JSearch works better with English terms and broader locations
     searches = [
-        ("HR People Operations",        "Milan Italy"),
-        ("Talent Acquisition Recruiter", "Milan Italy"),
-        ("Marketing Content",            "Milan Italy"),
-        ("HR People Operations",         "Europe remote"),
-        ("Marketing Content remote",     "Europe"),
-        ("HR Generalist remote",         "Italy"),
+        ("HR People Operations Marketing", "Milan Italy"),
+        ("Talent Acquisition Content",     "Milan Italy"),
+        ("HR Marketing remote",            "Europe"),
     ]
 
     all_raw = []
