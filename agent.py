@@ -291,7 +291,7 @@ def run():
             if job_id not in seen_ids:
                 seen_ids.add(job_id)
                 all_raw.append(job)
-        time.sleep(1)  # be polite to the API
+time.sleep(5)  # be polite to the API
 
     log.info(f"Fetched {len(all_raw)} unique raw jobs across all searches")
     jobs = parse_jobs(all_raw)
