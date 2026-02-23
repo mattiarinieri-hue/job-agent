@@ -7,10 +7,9 @@ import json
 import time
 import smtplib
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Optional
 import anthropic
 import requests
 from dotenv import load_dotenv
@@ -20,38 +19,33 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-ANTHROPIC_API_KEY   = os.getenv("ANTHROPIC_API_KEY")
-RAPIDAPI_KEY        = os.getenv("RAPIDAPI_KEY")          # For LinkedIn Jobs API
-SMTP_HOST           = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT           = int(os.getenv("SMTP_PORT", 587))
-SMTP_USER           = os.getenv("SMTP_USER")
-SMTP_PASSWORD       = os.getenv("SMTP_PASSWORD")         # Gmail: use App Password
-FROM_EMAIL          = os.getenv("FROM_EMAIL", SMTP_USER)
-TO_EMAIL            = os.getenv("TO_EMAIL")              # Girlfriend's email
-
-CV_PATH             = os.getenv("CV_PATH", "cv.txt")     # Plain text version of CV
-PREFERENCES_PATH    = os.getenv("PREFERENCES_PATH", "preferences.txt")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+RAPIDAPI_KEY      = os.getenv("RAPIDAPI_KEY")
+SMTP_HOST         = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT         = int(os.getenv("SMTP_PORT", 587))
+SMTP_USER         = os.getenv("SMTP_USER")
+SMTP_PASSWORD     = os.getenv("SMTP_PASSWORD")
+FROM_EMAIL        = os.getenv("FROM_EMAIL", SMTP_USER)
+TO_EMAIL          = os.getenv("TO_EMAIL")
+CV_PATH           = os.getenv("CV_PATH", "cv.txt")
+PREFERENCES_PATH  = os.getenv("PREFERENCES_PATH", "preferences.txt")
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-# ── CV & Preferences ─────────────────────────────────────────────────────────
+
+# ── CV & Preferences ──────────────────────────────────────────────────────────
 def load_file(path: str) -> str:
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
+
 # ── LinkedIn Job Search ───────────────────────────────────────────────────────
-def fetch_linkedin_jobs(keywords: str, location: str, limit: int = 20) -> list[dict]:
-    """
-    Fetch recent LinkedIn jobs via the JSearch API on RapidAPI.
-    Docs: https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch
-    Free tier: 200 req/month — enough for daily use.
-    """
+def fetch_linkedin_jobs(keywords: str, location: str, limit: int = 15) -> list:
     url = "https://jsearch.p.rapidapi.com/search"
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
     }
-    # Try last 3 days first, fall back to week if few results
     for date_posted in ["3days", "week"]:
         params = {
             "query": f"{keywords} jobs",
@@ -74,23 +68,23 @@ def fetch_linkedin_jobs(keywords: str, location: str, limit: int = 20) -> list[d
             return []
     return []
 
-def parse_jobs(raw_jobs: list[dict]) -> list[dict]:
-    """Normalise job data into a clean structure."""
+
+def parse_jobs(raw_jobs: list) -> list:
     jobs = []
     for j in raw_jobs:
         jobs.append({
-            "title":       j.get("job_title", "Unknown"),
-            "company":     j.get("employer_name", "Unknown"),
+            "title":       j.get("job_title") or "Unknown",
+            "company":     j.get("employer_name") or "Unknown",
             "location":    (j.get("job_city") or "") + ", " + (j.get("job_country") or ""),
-            "url":         j.get("job_apply_link") or j.get("job_google_link", ""),
-            "description": (j.get("job_description") or "")[:3000],  # cap to save tokens
-            "posted":      j.get("job_posted_at_datetime_utc", ""),
+            "url":         j.get("job_apply_link") or j.get("job_google_link") or "",
+            "description": (j.get("job_description") or "")[:3000],
+            "posted":      j.get("job_posted_at_datetime_utc") or "",
         })
     return jobs
 
+
 # ── Claude: Score & Select Top 10 ────────────────────────────────────────────
-def select_top_jobs(jobs: list[dict], cv: str, preferences: str) -> list[dict]:
-    """Ask Claude to pick and rank the 10 best jobs for the candidate."""
+def select_top_jobs(jobs: list, cv: str, preferences: str) -> list:
     if not jobs:
         return []
 
@@ -100,8 +94,8 @@ def select_top_jobs(jobs: list[dict], cv: str, preferences: str) -> list[dict]:
         for i, j in enumerate(jobs)
     )
 
-    prompt = f"""You are a career advisor. Based on the CV and job preferences below, 
-select and rank the TOP 10 most relevant jobs from the list. 
+    prompt = f"""You are a career advisor. Based on the CV and job preferences below,
+select and rank the TOP 10 most relevant jobs from the list.
 Return ONLY a JSON array of objects with keys: index (1-based from the list), score (0-100), reason (1 sentence).
 
 CV:
@@ -121,7 +115,6 @@ Return ONLY valid JSON, no other text."""
         messages=[{"role": "user", "content": prompt}],
     )
     text = msg.content[0].text.strip()
-    # Strip markdown fences if present
     if text.startswith("```"):
         text = text.split("```")[1]
         if text.startswith("json"):
@@ -130,9 +123,9 @@ Return ONLY valid JSON, no other text."""
     top = sorted(rankings, key=lambda x: x["score"], reverse=True)[:10]
     return [{"job": jobs[r["index"] - 1], "score": r["score"], "reason": r["reason"]} for r in top]
 
-# ── Claude: Tailor CV ────────────────────────────────────────────────────────
+
+# ── Claude: Tailor CV ─────────────────────────────────────────────────────────
 def tailor_cv(cv: str, job: dict) -> str:
-    """Return a tailored CV summary for the specific job."""
     prompt = f"""You are an expert CV writer. Rewrite the candidate's CV to better match the job description below.
 Keep the same structure but:
 - Reorder and emphasise relevant experience and skills
@@ -156,14 +149,14 @@ Output the tailored CV only."""
     )
     return msg.content[0].text.strip()
 
+
 # ── Claude: Networking Suggestions ───────────────────────────────────────────
-def suggest_contacts(job: dict, preferences: str) -> list[dict]:
-    """Suggest 2 LinkedIn profile types to connect with for the job."""
-    prompt = f"""For the job below, suggest 2 types of LinkedIn profiles the candidate should message 
+def suggest_contacts(job: dict, preferences: str) -> list:
+    prompt = f"""For the job below, suggest 2 types of LinkedIn profiles the candidate should message
 to get a referral or warm intro. For each, provide:
 - profile_type: their likely job title
 - why: 1 sentence on why they're valuable to contact
-- search_tip: a LinkedIn search query to find them (e.g. "HR Manager at {job['company']}")
+- search_tip: a LinkedIn search query to find them
 - message_template: a 2-sentence outreach message template
 
 JOB: {job['title']} at {job['company']} ({job['location']})
@@ -183,17 +176,17 @@ Return ONLY valid JSON array with 2 objects."""
             text = text[4:]
     return json.loads(text)
 
-# ── Email Builder ────────────────────────────────────────────────────────────
-def build_email(top_jobs: list[dict], cv: str, preferences: str) -> str:
-    """Build HTML email body with job cards."""
+
+# ── Email Builder ─────────────────────────────────────────────────────────────
+def build_email(top_jobs: list, cv: str, preferences: str) -> str:
     today = datetime.now().strftime("%A, %B %d %Y")
     sections = []
 
     for i, entry in enumerate(top_jobs, 1):
         job = entry["job"]
-        log.info(f"Tailoring CV for job {i}/10: {job['title']} @ {job['company']}")
+        log.info(f"Tailoring CV for job {i}/{len(top_jobs)}: {job['title']} @ {job['company']}")
         tailored = tailor_cv(cv, job)
-        log.info(f"Getting contacts for job {i}/10")
+        log.info(f"Getting contacts for job {i}/{len(top_jobs)}")
         contacts = suggest_contacts(job, preferences)
 
         contact_html = ""
@@ -238,7 +231,7 @@ def build_email(top_jobs: list[dict], cv: str, preferences: str) -> str:
 <head><meta charset="utf-8"></head>
 <body style="font-family:Arial,sans-serif;max-width:800px;margin:auto;padding:20px;color:#222;">
   <h1 style="color:#0077b5">🔍 Daily Job Digest — {today}</h1>
-  <p>Here are the <strong>top 10 jobs</strong> posted in the last 24 hours, tailored just for you.
+  <p>Here are the <strong>top {len(top_jobs)} jobs</strong> posted in the last few days, tailored just for you.
   Click any "Tailored CV" to expand it.</p>
   {''.join(sections)}
   <hr style="margin-top:40px">
@@ -249,11 +242,12 @@ def build_email(top_jobs: list[dict], cv: str, preferences: str) -> str:
 </html>"""
     return body_html
 
+
 # ── Email Sender ──────────────────────────────────────────────────────────────
 def send_email(html_body: str):
     today = datetime.now().strftime("%B %d")
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"🔍 Your Top 10 Jobs Today — {today}"
+    msg["Subject"] = f"🔍 Your Top Jobs Today — {today}"
     msg["From"]    = FROM_EMAIL
     msg["To"]      = TO_EMAIL
     msg.attach(MIMEText(html_body, "html"))
@@ -264,21 +258,20 @@ def send_email(html_body: str):
         server.sendmail(FROM_EMAIL, TO_EMAIL, msg.as_string())
     log.info(f"Email sent to {TO_EMAIL}")
 
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 def run():
     log.info("Job agent starting…")
     cv          = load_file(CV_PATH)
     preferences = load_file(PREFERENCES_PATH)
 
-    # Run multiple searches to maximise results for European/Italian job market
-    # JSearch works better with English terms and broader locations
     searches = [
         ("HR People Operations Marketing", "Milan Italy"),
         ("Talent Acquisition Content",     "Milan Italy"),
         ("HR Marketing remote",            "Europe"),
     ]
 
-all_raw = []
+    all_raw  = []
     seen_ids = set()
     for keywords, location in searches:
         log.info(f"Searching: '{keywords}' in '{location}'")
@@ -303,6 +296,7 @@ all_raw = []
     html = build_email(top_jobs, cv, preferences)
     send_email(html)
     log.info("Done ✅")
+
 
 if __name__ == "__main__":
     run()
